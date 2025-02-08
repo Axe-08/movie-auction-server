@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Auction System Test</title>
+    <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+        }
+
+        .card {
+            border: 1px solid #ccc;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+
+        .house-selector {
+            margin-bottom: 20px;
+            padding: 20px;
+            background: #f5f5f5;
+            border-radius: 8px;
+        }
+
+        .status {
+            color: #666;
+            font-style: italic;
+        }
+
+        .leaderboard {
+            margin-top: 20px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #f5f5f5;
+        }
+
+        .success {
+            color: green;
+        }
+
+        .error {
+            color: red;
+        }
+
+        .messages {
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Auction System Test Interface</h1>
+
+    <div class="house-selector">
+        <h3>Connect as Production House</h3>
+        <select id="accessCode">
+            <option value="RED001">Red Chillies (RED001)</option>
+            <option value="DHA001">Dharma Productions (DHA001)</option>
+            <option value="YRF001">Yash Raj Films (YRF001)</option>
+        </select>
+        <button onclick="connect()">Connect</button>
+        <div id="connectionStatus" class="status">Not connected</div>
+    </div>
+
+    <div class="container">
+        <div>
+            <div class="card">
+                <h3>Current Item</h3>
+                <div id="currentItem">
+                    <p>Name: Shah Rukh Khan</p>
+                    <p>Category: Lead Actor</p>
+                    <p>Rating: 95</p>
+                    <p>Base Price: ₹3.0 Cr</p>
+                    <p id="currentBidDisplay">Current Bid: ₹3.0 Cr</p>
+                </div>
+                <button onclick="simulateBid()">Simulate Bid</button>
+                <button onclick="simulateSale()">Simulate Sale</button>
+            </div>
+
+            <div class="card">
+                <h3>Event Log</h3>
+                <div id="messages" class="messages"></div>
+            </div>
+        </div>
+
+        <div>
+            <div class="card">
+                <h3>Leaderboard</h3>
+                <table id="leaderboard">
+                    <thead>
+                        <tr>
+                            <th>Production House</th>
+                            <th>Budget</th>
+                            <th>Avg Rating</th>
+                            <th>Crew Count</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let socket;
+        let connected = false;
+        let currentHouseId;
+        let currentBid = 30000000;
+        let reconnectAttempts = 0;
+    
+        function connect() {
+            if (socket) {
+                socket.disconnect();
+            }
+
+            socket = io('http://localhost:3001', {
+                transports: ['websocket'],
+                reconnection: true,
+                reconnectionDelay: 1000,
+                reconnectionDelayMax: 5000,
+                reconnectionAttempts: Infinity
+            });
+
+            const accessCode = document.getElementById('accessCode').value;
+
+            socket.on('connect', () => {
+                log('Connected to server');
+                socket.emit('authenticate', accessCode);
+            });
+
+            socket.on('auth_success', (data) => {
+                connected = true;
+                currentHouseId = data.houseId;
+                document.getElementById('connectionStatus').textContent =
+                    `Connected as ${data.houseName}`;
+                log('Authentication successful');
+                updateLeaderboard();
+            });
+
+            socket.on('disconnect', (reason) => {
+                log(`Disconnected: ${reason}`);
+                if (reason === "io server disconnect") {
+                    socket.connect();
+                }
+            });
+
+            socket.on('auth_error', (error) => {
+                log('Authentication failed: ' + error, 'error');
+            });
+
+            socket.on('bid_updated', (data) => {
+                currentBid = data.newBid;
+                document.getElementById('currentBidDisplay').textContent =
+                    `Current Bid: ₹${(data.newBid / 10000000).toFixed(2)} Cr`;
+                log(`New bid: ₹${(data.newBid / 10000000).toFixed(2)} Cr`);
+                updateLeaderboard();
+            });
+
+            socket.on('sale_completed', (data) => {
+                // Prevent the socket from being closed
+                socket.connect();
+
+                log(`Sale completed for ₹${(data.purchasePrice / 10000000).toFixed(2)} Cr`);
+                currentBid = 30000000; // Reset bid after sale
+                document.getElementById('currentBidDisplay').textContent =
+                    `Current Bid: ₹${(currentBid / 10000000).toFixed(2)} Cr`;
+                updateLeaderboard();
+            });
+
+            socket.on('reconnect_attempt', () => {
+                log('Attempting to reconnect...', 'info');
+            });
+
+            socket.on('reconnect', () => {
+                log('Reconnected to server', 'success');
+                if (lastAccessCode) {
+                    socket.emit('authenticate', lastAccessCode);
+                }
+            });
+
+            socket.on('error', (error) => {
+                log('Socket error: ' + error.message, 'error');
+            });
+
+            socket.on('connect_error', (error) => {
+                log('Connection error: ' + error.message, 'error');
+                connected = false;
+                document.getElementById('connectionStatus').textContent = 'Connection error - try reconnecting';
+            });
+        }
+
+        function getBidIncrement(currentBid) {
+            if (currentBid < 20000000) return 2500000; // 25 lakh
+            if (currentBid < 100000000) return 5000000; // 50 lakh
+            return 10000000; // 1 crore
+        }
+
+        function simulateBid() {
+            if (!connected) {
+                log('Please connect first', 'error');
+                return;
+            }
+            const increment = getBidIncrement(currentBid);
+            const newBid = currentBid + increment;
+            socket.emit('bid_update', {
+                itemId: 1,
+                newBid: newBid
+            });
+        }
+
+        function simulateSale() {
+            if (!connected || !currentHouseId) {
+                log('Please connect first', 'error');
+                return;
+            }
+            fetch('http://localhost:3001/api/sell', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    crewMemberId: 1,
+                    productionHouseId: currentHouseId,
+                    purchasePrice: currentBid
+                })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        log('Sale completed successfully');
+                    } else {
+                        log('Sale failed: ' + data.error, 'error');
+                    }
+                })
+                .catch(error => log('Error completing sale: ' + error, 'error'));
+        }
+
+        function updateLeaderboard() {
+            fetch('http://localhost:3001/api/leaderboard')
+                .then(response => response.json())
+                .then(data => {
+                    const tbody = document.querySelector('#leaderboard tbody');
+                    tbody.innerHTML = '';
+                    data.forEach(house => {
+                        const row = tbody.insertRow();
+                        row.insertCell().textContent = house.name;
+                        row.insertCell().textContent = `₹${(house.budget / 10000000).toFixed(2)} Cr`;
+                        row.insertCell().textContent = house.average_rating ?
+                            house.average_rating.toFixed(2) : 'N/A';
+                        row.insertCell().textContent =
+                            (house.lead_actors || 0) +
+                            (house.supporting_actors || 0) +
+                            (house.musicians || 0) +
+                            (house.directors || 0) +
+                            (house.nepo_kids || 0) +
+                            (house.comedic_relief || 0);
+                    });
+                })
+                .catch(error => log('Error updating leaderboard: ' + error, 'error'));
+        }
+
+        function log(message, type = 'info') {
+            const messages = document.getElementById('messages');
+            const div = document.createElement('div');
+            div.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+            div.className = type;
+            messages.appendChild(div);
+            messages.scrollTop = messages.scrollHeight;
+        }
+    </script>
+</body>
+
+</html>
