@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: movie-auction-server
+    env: node
+    buildCommand: ./build.sh
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 18.x

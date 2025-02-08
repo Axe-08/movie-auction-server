@@ -1,10 +1,9 @@
-import express, { Request, Response } from 'express';
-import { networkInterfaces, NetworkInterfaceInfo } from 'os';
-import { AddressInfo } from 'net';
+import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import sqlite3 from 'sqlite3';
 import cors from 'cors';
+import { networkInterfaces } from 'os';
 
 // Define types for our application
 interface ConnectedClient {
